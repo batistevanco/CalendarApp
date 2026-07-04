@@ -42,9 +42,11 @@ import CoreLocation
 final class WeatherStore {
     private(set) var now: WeatherNow?
     private(set) var daily: [DayForecast] = []
-    private(set) var cityName: String = "Sylhet"
-    private(set) var sunriseText: String = "06:07"
-    private(set) var sunsetText: String = "17:59"
+    /// Real place name once reverse-geocoded from the user's location. Empty until then.
+    private(set) var cityName: String = ""
+
+    /// True once live conditions for the user's location have loaded.
+    var hasData: Bool { now != nil }
 
     private var lastFetch: Date?
     private let minInterval: TimeInterval = 30 * 60
@@ -72,15 +74,6 @@ final class WeatherStore {
         daily = weather.dailyForecast.forecast.prefix(10).map {
             DayForecast(date: $0.date, symbolName: $0.symbolName,
                         high: $0.highTemperature, low: $0.lowTemperature)
-        }
-        
-        // Parse sunrise and sunset from forecast sun dates
-        if let todayWeather = weather.dailyForecast.forecast.first {
-            let sun = todayWeather.sun
-            let f = DateFormatter()
-            f.timeStyle = .short
-            if let rise = sun.sunrise { sunriseText = f.string(from: rise) }
-            if let set = sun.sunset { sunsetText = f.string(from: set) }
         }
     }
 

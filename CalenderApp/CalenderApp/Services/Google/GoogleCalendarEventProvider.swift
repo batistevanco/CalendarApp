@@ -104,35 +104,101 @@ nonisolated final class GoogleCalendarEventProvider: EventProviding {
         guard let (calendarID, eventID) = split(event.id) else { return }
         let account = try await account(owning: calendarID)
         let token = try await auth.validAccessToken(for: account)
-        
-        let targetID: String
-        var body = GEventWrite(from: event)
-        
-        if scope == .futureEvents {
-            targetID = eventID.split(separator: "_").first.map(String.init) ?? eventID
-            body.recurrence = GEventWrite.rrule(event.recurrence)
-        } else {
-            targetID = eventID
+
+        // "This event" edits the concrete instance and never touches the series rule.
+        if scope == .thisEvent {
+            var body = GEventWrite(from: event)
+            body.recurrence = nil
+            let _: GEvent = try await send("PATCH", "calendars/\(calendarID)/events/\(eventID)",
+                                           token: token, body: body)
+            return
         }
-        
-        let path = "calendars/\(calendarID)/events/\(targetID)"
-        let _: GEvent = try await send("PATCH", path, token: token, body: body)
+
+        // "This and future": split the series. End the old series just before this
+        // occurrence, then start a fresh series from the edited instance.
+        let masterID = Self.masterID(from: eventID)
+        let master: GEvent = try await get("calendars/\(calendarID)/events/\(masterID)", token: token)
+        let existing = master.recurrence ?? []
+
+        if !existing.isEmpty {
+            let patch = GRecurrencePatch(recurrence: Self.truncate(existing, before: event.start))
+            let _: GEvent = try await send("PATCH", "calendars/\(calendarID)/events/\(masterID)",
+                                           token: token, body: patch)
+        }
+
+        var body = GEventWrite(from: event)
+        body.recurrence = event.recurrence.isRepeating
+            ? GEventWrite.rrule(event.recurrence)
+            : Self.stripLimits(existing)
+        let _: GEvent = try await send("POST", "calendars/\(calendarID)/events",
+                                       token: token, body: body)
     }
 
     func delete(_ event: CalendarEvent, scope: RecurrenceScope) async throws {
         guard let (calendarID, eventID) = split(event.id) else { return }
         let account = try await account(owning: calendarID)
         let token = try await auth.validAccessToken(for: account)
-        
-        let targetID: String
-        if scope == .futureEvents {
-            targetID = eventID.split(separator: "_").first.map(String.init) ?? eventID
-        } else {
-            targetID = eventID
+
+        // "This event" removes just the single instance.
+        if scope == .thisEvent {
+            try await sendVoid("DELETE", "calendars/\(calendarID)/events/\(eventID)", token: token)
+            return
         }
-        
-        let path = "calendars/\(calendarID)/events/\(targetID)"
-        try await sendVoid("DELETE", path, token: token)
+
+        // "This and future": truncate the master's recurrence so this occurrence
+        // and everything after it drop off, leaving past occurrences intact.
+        let masterID = Self.masterID(from: eventID)
+        let master: GEvent = try await get("calendars/\(calendarID)/events/\(masterID)", token: token)
+        let existing = master.recurrence ?? []
+
+        guard !existing.isEmpty else {
+            // Not really a series — just delete it.
+            try await sendVoid("DELETE", "calendars/\(calendarID)/events/\(masterID)", token: token)
+            return
+        }
+        let patch = GRecurrencePatch(recurrence: Self.truncate(existing, before: event.start))
+        let _: GEvent = try await send("PATCH", "calendars/\(calendarID)/events/\(masterID)",
+                                       token: token, body: patch)
+    }
+
+    // MARK: Recurrence rule helpers
+
+    /// The series-master id for a Google instance id ("<master>_<timestamp>").
+    private static func masterID(from eventID: String) -> String {
+        String(eventID.split(separator: "_").first ?? Substring(eventID))
+    }
+
+    /// Ends each RRULE just before `date` by rewriting its UNTIL, leaving
+    /// RDATE/EXDATE lines untouched.
+    private static func truncate(_ lines: [String], before date: Date) -> [String] {
+        let until = untilStamp(date.addingTimeInterval(-1))
+        return lines.map { line in
+            guard line.uppercased().hasPrefix("RRULE") else { return line }
+            return stripLimitParams(line) + ";UNTIL=\(until)"
+        }
+    }
+
+    /// Removes any UNTIL/COUNT bounds so an RRULE becomes open-ended (for a new series).
+    private static func stripLimits(_ lines: [String]) -> [String] {
+        lines.map { $0.uppercased().hasPrefix("RRULE") ? stripLimitParams($0) : $0 }
+    }
+
+    private static func stripLimitParams(_ line: String) -> String {
+        line.split(separator: ";").map(String.init)
+            .filter { part in
+                let u = part.uppercased()
+                return !u.hasPrefix("UNTIL=") && !u.hasPrefix("COUNT=")
+            }
+            .joined(separator: ";")
+    }
+
+    /// RFC5545 UTC timestamp (`yyyyMMdd'T'HHmmss'Z'`) for an RRULE UNTIL value.
+    private static func untilStamp(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        return f.string(from: date)
     }
 
     // MARK: Routing helpers

@@ -52,9 +52,7 @@ actor EventKitEventProvider: EventProviding {
     // MARK: Writes
 
     func update(_ event: CalendarEvent, scope: RecurrenceScope) async throws {
-        // Our ids are "<eventIdentifier>|<startTimestamp>"; recover the EK id.
-        let ekID = String(event.id.split(separator: "|").first ?? "")
-        guard let ekEvent = store.event(withIdentifier: ekID) else { return }
+        guard let ekEvent = occurrence(for: event) else { return }
         ekEvent.title = event.title
         ekEvent.startDate = event.start
         ekEvent.endDate = event.end
@@ -95,10 +93,30 @@ actor EventKitEventProvider: EventProviding {
     }
 
     func delete(_ event: CalendarEvent, scope: RecurrenceScope) async throws {
-        let ekID = String(event.id.split(separator: "|").first ?? "")
-        guard let ekEvent = store.event(withIdentifier: ekID) else { return }
+        guard let ekEvent = occurrence(for: event) else { return }
         let span: EKSpan = (scope == .futureEvents) ? .futureEvents : .thisEvent
         try store.remove(ekEvent, span: span, commit: true)
+    }
+
+    /// Resolves the *specific* occurrence for our event id. `event(withIdentifier:)`
+    /// only ever returns the first occurrence of a series, so for recurring events
+    /// we search a tight window around the event's start for the matching instance.
+    /// This makes editing/deleting "just this event" act on the right occurrence.
+    private func occurrence(for event: CalendarEvent) -> EKEvent? {
+        // Our ids are "<eventIdentifier>|<startTimestamp>"; recover the EK id.
+        let ekID = String(event.id.split(separator: "|").first ?? "")
+        guard let base = store.event(withIdentifier: ekID) else { return nil }
+        guard base.hasRecurrenceRules else { return base }
+
+        let predicate = store.predicateForEvents(
+            withStart: event.start.addingTimeInterval(-1),
+            end: event.end.addingTimeInterval(1),
+            calendars: base.calendar.map { [$0] }
+        )
+        return store.events(matching: predicate).first {
+            $0.eventIdentifier == ekID &&
+            abs($0.startDate.timeIntervalSince(event.start)) < 1
+        } ?? base
     }
 
     /// Looks up a writable calendar by our identifier.

@@ -14,12 +14,14 @@ struct SettingsView: View {
     @Environment(ThemeManager.self) private var theme
     @Environment(NotificationManager.self) private var notifications
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("userDisplayName") private var userName = ""
 
     var body: some View {
         @Bindable var theme = theme
 
         NavigationStack {
             List {
+                profileSection
                 calendarsSection
                 notificationsSection
                 appearanceSection(theme: theme)
@@ -35,6 +37,25 @@ struct SettingsView: View {
                 }
             }
             .task { await store.loadCalendarsIfNeeded() }
+        }
+    }
+
+    // MARK: Profile
+
+    private var profileSection: some View {
+        Section {
+            HStack(spacing: CalSpacing.m) {
+                Image(systemName: "person.crop.circle.fill")
+                    .foregroundStyle(CalColor.accent)
+                TextField("Your name", text: $userName)
+                    .textContentType(.givenName)
+                    .textInputAutocapitalization(.words)
+                    .submitLabel(.done)
+            }
+        } header: {
+            Text("Profile")
+        } footer: {
+            Text("Used to greet you on the Today screen.")
         }
     }
 

@@ -12,6 +12,8 @@ import SwiftUI
 
 struct WelcomeStep: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("userDisplayName") private var userName = ""
+    @FocusState private var nameFocused: Bool
     @State private var appeared = false
 
     var body: some View {
@@ -44,8 +46,31 @@ struct WelcomeStep: View {
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 12)
 
+            // A gentle, optional first-name prompt so the app can greet by name.
+            VStack(spacing: CalSpacing.xs) {
+                TextField("Your name", text: $userName)
+                    .textContentType(.givenName)
+                    .textInputAutocapitalization(.words)
+                    .submitLabel(.done)
+                    .focused($nameFocused)
+                    .multilineTextAlignment(.center)
+                    .font(CalFont.headline)
+                    .padding(.vertical, CalSpacing.m)
+                    .padding(.horizontal, CalSpacing.l)
+                    .background(CalColor.surface, in: .rect(cornerRadius: CalRadius.card))
+                    .onSubmit { nameFocused = false }
+
+                Text("We'll use this to greet you. You can change it later.")
+                    .font(CalFont.caption)
+                    .foregroundStyle(CalColor.tertiaryText)
+            }
+            .opacity(appeared ? 1 : 0)
+            .frame(maxWidth: 320)
+
             Spacer()
         }
+        .contentShape(.rect)
+        .onTapGesture { nameFocused = false }
         .onAppear {
             if reduceMotion { appeared = true }
             else { withAnimation(.smooth(duration: 0.7)) { appeared = true } }

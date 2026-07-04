@@ -12,6 +12,7 @@ import SwiftUI
 struct TodayView: View {
     @Environment(CalendarStore.self) private var store
     @Environment(WeatherStore.self) private var weather
+    @AppStorage("userDisplayName") private var userName = ""
     @State private var selected: CalendarEvent?
     @State private var showingSettings = false
     @State private var isAgendaView = true
@@ -22,6 +23,16 @@ struct TodayView: View {
     private let day = Date().startOfDay
 
     private var events: [CalendarEvent] { store.events(on: day) }
+
+    /// The user's name from onboarding, whitespace-trimmed. Empty ⇒ no name shown.
+    private var trimmedName: String {
+        userName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Locale-appropriate temperature unit so the label matches the shown value.
+    private var temperatureUnit: String {
+        Locale.current.measurementSystem == .us ? "°F" : "°C"
+    }
 
     private var filteredEvents: [CalendarEvent] {
         let all = events
@@ -90,6 +101,7 @@ struct TodayView: View {
             .refreshable { await store.refresh(day) }
             .task {
                 await store.loadIfNeeded(day)
+                await weather.refresh()
                 guard !didInitialScroll else { return }
                 didInitialScroll = true
                 withAnimation(.smooth) {
@@ -109,27 +121,21 @@ struct TodayView: View {
                         .font(.body)
                         .foregroundStyle(CalColor.primaryText)
                         .onTapGesture { showingSettings = true }
-                    
-                    Text("Welcome back,")
+                        .accessibilityLabel("Menu")
+
+                    Text(trimmedName.isEmpty ? "Welcome back" : "Welcome back,")
                         .font(.system(.body, design: .default))
                         .foregroundStyle(CalColor.secondaryText)
-                    
-                    Text("Jaydon")
-                        .font(.system(.body, design: .default, weight: .bold))
-                        .foregroundStyle(CalColor.primaryText)
+
+                    if !trimmedName.isEmpty {
+                        Text(trimmedName)
+                            .font(.system(.body, design: .default, weight: .bold))
+                            .foregroundStyle(CalColor.primaryText)
+                    }
                 }
             }
             
             Spacer()
-            
-            // Profile image with a nice border
-            Image(systemName: "person.crop.circle.fill")
-                .resizable()
-                .frame(width: 36, height: 36)
-                .foregroundStyle(CalColor.accent.gradient)
-                .background(Circle().fill(Color(.systemGray6)))
-                .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
-                .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
         }
     }
 
@@ -185,68 +191,45 @@ struct TodayView: View {
     }
 
     private var weatherCard: some View {
-        HStack(spacing: CalSpacing.l) {
-            // Temperature & City
+        HStack(alignment: .center, spacing: CalSpacing.l) {
+            // Temperature & current location
             VStack(alignment: .leading, spacing: 4) {
                 Text("Weather")
                     .font(.system(.caption, design: .default, weight: .medium))
                     .foregroundStyle(CalColor.secondaryText)
-                
+
                 HStack(alignment: .top, spacing: 0) {
-                    let temp = weather.now?.temperatureText.replacingOccurrences(of: "°", with: "") ?? "21"
+                    let temp = weather.now?.temperatureText.replacingOccurrences(of: "°", with: "") ?? "--"
                     Text(temp)
                         .font(.system(size: 42, weight: .semibold, design: .default))
                         .foregroundStyle(CalColor.primaryText)
-                    
-                    Text(" ºC")
+                        .contentTransition(.numericText())
+
+                    Text(" \(temperatureUnit)")
                         .font(.system(.body, design: .default, weight: .medium))
                         .foregroundStyle(CalColor.primaryText)
                         .padding(.top, 6)
                 }
-                
-                Text(weather.cityName)
+
+                Text(weather.cityName.isEmpty ? String(localized: "Locating…") : weather.cityName)
                     .font(.system(.body, design: .default, weight: .semibold))
-                    .foregroundStyle(CalColor.primaryText)
+                    .foregroundStyle(weather.cityName.isEmpty ? CalColor.secondaryText : CalColor.primaryText)
             }
-            
+
             Spacer()
-            
-            // Divider
-            Rectangle()
-                .fill(CalColor.hairline)
-                .frame(width: 0.5)
-                .frame(maxHeight: .infinity)
-                .padding(.vertical, 4)
-            
-            Spacer()
-            
-            // Sunrise & Sunset
-            VStack(alignment: .leading, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Sunrise")
-                        .font(.system(.caption2, design: .default))
-                        .foregroundStyle(CalColor.secondaryText)
-                    
-                    Text(weather.sunriseText)
-                        .font(.system(.body, design: .rounded, weight: .bold))
-                        .foregroundStyle(CalColor.primaryText)
-                }
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Sunset")
-                        .font(.system(.caption2, design: .default))
-                        .foregroundStyle(CalColor.secondaryText)
-                    
-                    Text(weather.sunsetText)
-                        .font(.system(.body, design: .rounded, weight: .bold))
-                        .foregroundStyle(CalColor.primaryText)
-                }
+
+            // Current conditions glyph
+            if let symbol = weather.now?.symbolName {
+                Image(systemName: symbol)
+                    .symbolRenderingMode(.multicolor)
+                    .font(.system(size: 34))
+                    .transition(.opacity)
             }
-            .frame(width: 80, alignment: .leading)
         }
         .padding(CalSpacing.l)
         .background(Color(.secondarySystemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     private var searchBar: some View {

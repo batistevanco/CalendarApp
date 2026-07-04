@@ -51,6 +51,8 @@ nonisolated struct GEvent: Decodable {
     let end: GDateTime?
     let attendees: [GAttendee]?
     let recurringEventId: String?
+    /// RRULE/RDATE/EXDATE lines — only present on a series master.
+    let recurrence: [String]?
 
     func asCalendarEvent(calendar: GCalendar) -> CalendarEvent? {
         guard let id,
@@ -99,6 +101,11 @@ nonisolated struct GDateTime: Decodable {
 }
 
 // MARK: - Write payload
+
+/// Minimal PATCH body that only rewrites a series' recurrence rules.
+nonisolated struct GRecurrencePatch: Encodable {
+    var recurrence: [String]
+}
 
 nonisolated struct GEventWrite: Encodable {
     var summary: String
